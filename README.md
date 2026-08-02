@@ -1,2 +1,3 @@
-\# HiWonder JetAcker Pipeline
+# HiWonder JetAcker Pipeline
 
+Modular VLA pipeline.
