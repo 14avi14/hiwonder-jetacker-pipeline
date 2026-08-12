@@ -44,11 +44,13 @@ Description: This is the main REAL end-to-end runner. Asks for an instruction, a
 #The standard library imports:
 import json #This pretty-prints the JSON at each stage
 import math #This is used by the Stage 4 movement simulation
+import socket #For transfering information between car and server
+import cv2 #For visualizing incoming image
 
 #The local module imports:
 import target_finder
 import vision
-import path_planner
+import socket_ops
 
 
 #============================== CAR STATE / CAPABILITIES ==============================
@@ -94,6 +96,8 @@ CAR_CAPABILITIES = {
     "height_m": 0.15  #GUESS, not measured
 }
 
+USE_DEPTH = False #Need intrinsic matrix -- see vision.py
+
 
 #=================================== MAIN ROUTINE ======================================
 
@@ -107,80 +111,88 @@ def main():
 
     instruction = input("\nEnter instruction (e.g. 'drive to the red ball'): ").strip()
     object_name = input("Enter object type to search for (e.g. 'ball', 'cube'): ").strip() or "cube"
-    image_path = input("Enter path to a real photo to test against: ").strip().strip('"').strip("'")
+    #image_path = input("Enter path to a real photo to test against: ").strip().strip('"').strip("'")
 
-    #====== Stage 1: extraction ======
+    #====== Stage 0: Preparing for message from car =====
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(socket_ops.SERVER_ADDRESS)
 
-    print(f"\n--- Stage 1: get_targets() [{'LLM' if target_finder.USE_LLM_FOR_CALL1 else 'deterministic, no LLM'}] ---")
-    call1_result = target_finder.get_targets(instruction, object_name = object_name)
-    print(json.dumps(call1_result, indent = 2))
+    server.listen(1) #Max of 1 connect request
+    print("Server started listening")
 
-    #====== Stage 2: vision (REAL detector, both passes) ======
+    #Accept connection
+    (conn, conn_addr) = server.accept()
+    print("Got connnection from", conn_addr)
 
-    print("\n--- Stage 2: vision.run_vision() [REAL detector, x/y/z MOCKED] ---")
-    detections = vision.run_vision(image_path, call1_result["targets"], device = "cpu")
-    print(f"{len(detections)} total detections (prompted + default_vocab)")
+    #Check incoming message type. 
+    #  1. msg_type=socket_ops.CLOSE_CONNECTION_MSG -> ending operations
+    #  2. msg_type=socket_ops.INITIAL_PREDICTION_MSG -> will send images(bgr+pos) for get initial delta position prediction
+    #==== FUTURE IDEAS ====
+    #  3. msg_type=socket_ops.OBSTACLE -> will send image along with delta from intitial position 
+    #                                     and last target, and distance of object detected by LiDAR in front
+    msg_type = socket_ops.recieve_string(conn)
 
-    prompted = [d for d in detections if d["source"] == "prompted"]
-    print(f"  {len(prompted)} from the PROMPTED pass:")
-    for d in prompted:
-        print(f"    {d}")
+    print("[INCOMING MESSAGE TYPE]", msg_type)
 
-    if not prompted:
-        print("\n  No prompted detections found -- Call #2 will likely return "
-              "'target_not_found'. This is a real result, not an error.")
+    if msg_type == socket_ops.CLOSE_CONNECTION_MSG:
+        print("Closing connection...")
+        conn.close()
 
-    #====== Stage 3: Call #2 ======
+    elif msg_type == socket_ops.INITIAL_PREDICTION_MSG:
+        bgr_image_arr = socket_ops.recieve_image(conn) #incoming image (3D)
+        depth_image_arr = socket_ops.recieve_image(conn)
 
-    print(f"\n--- Stage 3: get_delta_auto() [{'LLM' if target_finder.USE_LLM_FOR_CALL2 else 'deterministic, no LLM'}] ---")
-    call2_result = target_finder.get_delta_auto(
-        instruction, call1_result, detections, STARTING_CAR_STATE, CAR_CAPABILITIES
-    )
-    print(json.dumps(call2_result, indent = 2))
+        if not USE_DEPTH:
+            depth_image_arr = None
 
-    #====== Stage 4: motion controller ======
+        #Quick visualization of image
+        cv2.imshow("img-recieved", bgr_image_arr)
+        cv2.waitKey(0) #Close window to continue
+        cv2.destroyAllWindows()
 
-    print("\n--- Stage 4: path_planner.MotionController [REAL controller logic, "
-          "car movement SIMULATED -- no real odometry connected yet] ---")
+        #====== Stage 1: extraction ======
 
-    controller = path_planner.MotionController(CAR_CAPABILITIES)
-    got_target = controller.set_target(call2_result, STARTING_CAR_STATE)
+        print(f"\n--- Stage 1: get_targets() [{'LLM' if target_finder.USE_LLM_FOR_CALL1 else 'deterministic, no LLM'}] ---")
+        call1_result = target_finder.get_targets(instruction, object_name = object_name)
+        print(json.dumps(call1_result, indent = 2))
 
-    if not got_target:
-        print(f"No target set (Call #2 status was '{call2_result.get('status')}', not 'moving'). "
-              "Nothing to drive toward -- car stays stopped.")
+        #====== Stage 2: vision (REAL detector, both passes) ======
 
-    else:
-        print(f"Target set in world frame: {controller.target_world_xy}")
-        print("\nSimulated control ticks (crude mock movement, NOT real odometry -- "
-              "just enough to show compute_control() responding each tick):")
+        print("\n--- Stage 2: vision.run_vision() [REAL detector, x/y/z MOCKED] ---")
+        detections = vision.run_vision(bgr_image_arr, depth_image_arr, call1_result["targets"], device = "cpu")
+        print(f"{len(detections)} total detections (prompted + default_vocab)")
 
-        sim_car_state = dict(STARTING_CAR_STATE)
+        prompted = [d for d in detections if d["source"] == "prompted"]
+        print(f"  {len(prompted)} from the PROMPTED pass:")
+        for d in prompted:
+            print(f"    {d}")
 
-        for tick in range(6):
-            linear_x, angular_z, status = controller.compute_control(sim_car_state)
-            print(f"  tick {tick}: pos={[round(p, 3) for p in sim_car_state['position_xy']]}, "
-                  f"heading={sim_car_state['heading_deg']:.1f} deg "
-                  f"-> linear_x={linear_x} m/s, angular_z={angular_z} rad/s, status={status}")
+        if not prompted:
+            print("\n  No prompted detections found -- Call #2 will likely return "
+                "'target_not_found'. This is a real result, not an error.")
 
-            if status != "driving":
-                break
+        #====== Stage 3: Call #2 ======
 
-            #This crudely fakes odometry ticking forward -- NOT a real physics sim
-            dt = 0.3
-            heading_rad = math.radians(sim_car_state["heading_deg"])
-            sim_car_state["position_xy"] = [
-                sim_car_state["position_xy"][0] + linear_x * dt * math.cos(heading_rad),
-                sim_car_state["position_xy"][1] + linear_x * dt * math.sin(heading_rad)
-            ]
-            sim_car_state["heading_deg"] += math.degrees(angular_z) * dt
-            sim_car_state["velocity"] = linear_x
+        print(f"\n--- Stage 3: get_delta_auto() [{'LLM' if target_finder.USE_LLM_FOR_CALL2 else 'deterministic, no LLM'}] ---")
+        call2_result = target_finder.get_delta_auto(
+            instruction, call1_result, detections, STARTING_CAR_STATE, CAR_CAPABILITIES
+        )
+        print(json.dumps(call2_result, indent = 2))
+
+        #===== Stage 4: sending instructions =====
+        print("--- Stage 4: Sending instructions to car ---")
+
+        instructions_json = json.dumps(call2_result)
+        socket_ops.send_string(conn, instructions_json)
 
     print("\n" + "=" * 70)
-    print("Done. Reminder: x/y/z from vision.py are MOCKED (bbox-derived placeholders),")
-    print("not real depth camera data. Stage 4's car movement is SIMULATED, not real")
-    print("odometry. Everything else in this run (extraction, detection, color-check,")
-    print("Call #2, and the controller math itself) was real.")
+    if not USE_DEPTH:
+        print("Done. Reminder: x/y/z from vision.py are MOCKED (bbox-derived placeholders),")
+        print("not real depth camera data. Everything else in this run (extraction,")
+        print("detection, color-check, and Call #2) was real.")
+    else:
+        print("Done. Everything in this run was real, including extraction, detection, ")
+        print("color-check, and Call #2.")
     print("=" * 70)
 
 
