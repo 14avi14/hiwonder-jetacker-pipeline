@@ -100,7 +100,7 @@ def main():
     #====== Stage 2: vision (REAL detector, both passes) ======
 
     print("\n--- Stage 2: vision.run_vision() [REAL detector, x/y/z MOCKED] ---")
-    detections = vision.run_vision(image_path, call1_result["targets"], device = "cpu")
+    detections = vision.run_vision(None, None, call1_result["targets"], device = "cpu", image_path=image_path)
     print(f"{len(detections)} total detections (prompted + default_vocab)")
 
     prompted = [d for d in detections if d["source"] == "prompted"]
