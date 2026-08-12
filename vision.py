@@ -152,9 +152,6 @@ def _color_check(image, bbox_xyxy, requested_color, mask = None):
 #*** MOCK -- placeholder only, pending the real depth camera module ***
 #Returns a fake (x, y, z) in meters, loosely derived from bbox position and size in the
 #2D image (bigger box = assumed closer). NOT real depth data.
-#TODO (whoever owns the depth camera work): replace this function's body with a real
-#lookup at the bbox centroid against the Astra Pro's depth frame + intrinsic calibration
-#matrix. Keep the same return shape (x, y, z) in meters so nothing downstream changes.
 def get_mock_depth(bbox_xyxy, image_shape):
     x1, y1, x2, y2 = bbox_xyxy
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
@@ -169,15 +166,38 @@ def get_mock_depth(bbox_xyxy, image_shape):
 
     return (round(mock_x, 3), round(mock_y, 3), round(mock_z, 3))
 
+#*** REAL - Will work given that intrinsic matrix values are accurate ***
+#TODO (whoever owns the depth camera work): replace this dictionary with real values
+# from the car(should be found in /camera_info topic or similar).
+INTRINSIC_MATRIX_VALUES = {
+    "fx": 0.0,
+    "fy": 0.0,
+    "cx": 0.0,
+    "cy": 0.0
+}
+
+def get_real_depth(bbox_xyxy, z):
+    x1, y1, x2, y2 = bbox_xyxy
+
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+
+    x = z * (cx - INTRINSIC_MATRIX_VALUES["cx"]) / INTRINSIC_MATRIX_VALUES["fx"]
+    y = z * (cy - INTRINSIC_MATRIX_VALUES["cy"]) / INTRINSIC_MATRIX_VALUES["fy"]
+
+    return (x, y, z)
 
 #================================== MAIN ENTRY POINT ===================================
 
 #This function runs BOTH prompted and default-vocab passes on one real image, and
 #returns a list of detection dicts matching what target_finder.get_delta_auto() expects
-def run_vision(image_path, targets, device = "cpu"):
-    image = cv2.imread(image_path)
-    if image is None:
-        raise FileNotFoundError(f"Could not read image: {image_path}")
+def run_vision(image_arr, depth_image_arr, targets, device = "cpu", image_path = None):
+    use_depth_img = depth_image_arr is not None
+    if image_arr is None:
+        image = cv2.imread(image_path)
+        if image is None:
+            raise FileNotFoundError(f"Could not read image: {image_path}")
+    else:
+        image = image_arr
 
     detections = []
 
@@ -209,7 +229,7 @@ def run_vision(image_path, targets, device = "cpu"):
     else:
         model_p.set_classes(prompt_names)
 
-    results_p = model_p.predict(image_path, device = device, verbose = False)[0]
+    results_p = model_p.predict(image, device = device, verbose = False)[0]
     has_masks = results_p.masks is not None
 
     if results_p.boxes is not None:
@@ -225,12 +245,23 @@ def run_vision(image_path, targets, device = "cpu"):
                 mask = cv2.resize(mask_arr, (image.shape[1], image.shape[0])) > 0.5
 
             attr_match = _color_check(image, bbox, requested_attr, mask = mask) #Independent verification
-            x, y, z = get_mock_depth(bbox, image.shape) #MOCK -- see docstring above
+
+            if use_depth_img:
+                #TODO: Need to research, does the mask give the coordinates of the object in the image? If so, that may
+                #be more accurate than simply using the center of the bounding box(for depth).
+                x1, y1, x2, y2 = bbox
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+
+                #TODO: depth_z is in mm if dtype = uint16, meters if dtype = float32, need to check on real car, and verify 
+                depth_z = depth_image_arr[cy][cx] 
+                x, y, z = get_real_depth(bbox, depth_z)
+            else:
+                x, y, z = get_mock_depth(bbox, image.shape) #MOCK -- see docstring above
 
             detections.append({
                 "name": plain_name,
                 "attribute_match": attr_match,
-                "x": x, "y": y, "z": z, #MOCK
+                "x": x, "y": y, "z": z, 
                 "confidence": round(float(box.conf[0]), 3),
                 "source": "prompted"
             })
@@ -238,13 +269,21 @@ def run_vision(image_path, targets, device = "cpu"):
     #====== Default-vocab / "unprompted" pass ======
 
     model_d = _get_default_model()
-    results_d = model_d.predict(image_path, device = device, verbose = False)[0]
+    results_d = model_d.predict(image, device = device, verbose = False)[0]
 
     if results_d.boxes is not None:
         for box in results_d.boxes:
             name = results_d.names[int(box.cls[0])]
             bbox = box.xyxy[0].tolist()
-            x, y, z = get_mock_depth(bbox, image.shape) #MOCK -- see docstring above
+
+            # Will need to be updated, see above
+            if use_depth_img:
+                x1, y1, x2, y2 = bbox
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                depth_z = depth_image_arr[cx][cy]
+                x, y, z = get_real_depth(bbox, depth_z)
+            else:
+                x, y, z = get_mock_depth(bbox, image.shape) #MOCK -- see docstring above
 
             detections.append({
                 "name": name,
