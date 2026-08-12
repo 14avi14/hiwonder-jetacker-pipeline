@@ -30,12 +30,7 @@ def send_string(conn, msg):
     message = msg.encode(FORMAT)
     send_bytes(conn, message)
 
-def send_image(conn, file_name, format_ext=".jpg"):
-    image = cv2.imread(file_name)
-    if image is None:
-        print(f"[IMAGE SEND] '{file_name}' could not be loaded")
-        return
-
+def send_image(conn, image, format_ext=".jpg"):
     success, img_encoded = cv2.imencode(format_ext, image)
 
     if success:
