@@ -65,27 +65,33 @@ USE_LLM_FOR_CALL2 = True  #True  = get_delta() (real LLM call)
 #in this file (prompt construction, JSON parsing, validation) is provider-agnostic.
 def call_llm(system_prompt, user_content):
     """
-    Real implementation using the Anthropic API. Requires:
-      pip install anthropic
-      export ANTHROPIC_API_KEY=your_key_here
+    Real implementation using the Cerebras API. Requires:
+      pip install cerebras_cloud_sdk
+      macOS/Linux: export CEREBRAS_API_KEY=your_key_here
+      Windows: $env:CEREBRAS_API_KEY=your_key_here
 
-    Swap this out for a different provider (OpenAI, Cerebras, local model, etc.) by
+    Swap this out for a different provider (OpenAI, Anthropic, local model, etc.) by
     replacing the body below -- the function signature and return type (raw text
     string, expected to contain JSON) stay the same either way.
     """
-    import anthropic #This import is local so the rest of the file works without it installed
+    from cerebras.cloud.sdk import Cerebras
+    from dotenv import load_dotenv
 
-    client = anthropic.Anthropic() #This reads ANTHROPIC_API_KEY from the environment
-    response = client.messages.create(
-        model = "claude-sonnet-4-6",
-        max_tokens = 500,
-        system = system_prompt,
-        messages = [{"role": "user", "content": json.dumps(user_content)}]
+    load_dotenv()
+
+    client = Cerebras(
+        api_key=os.environ.get("CEREBRAS_API_KEY")
     )
 
-    dprint("DEBUG call_llm RAW RESPONSE: ", response.content[0].text) #Debug
-
-    return response.content[0].text
+    response = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_content)}
+        ],
+        model="gpt-oss-120b"
+    )
+    dprint("DEBUG call_llm RAW RESPONSE: ", response.choices[0].message.content) #Debug
+    return response.choices[0].message.content
 
 
 #This function pulls a JSON object out of raw LLM text, tolerating markdown fences or
