@@ -115,86 +115,95 @@ def main():
 
     #====== Stage 0: Preparing for message from car =====
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(socket_ops.SERVER_ADDRESS)
+    server.bind(("0.0.0.0", socket_ops.PORT))
 
     server.listen(1) #Max of 1 connect request
     print("Server started listening")
 
-    #Accept connection
-    (conn, conn_addr) = server.accept()
-    print("Got connnection from", conn_addr)
+    server.settimeout(15.0) #Time out if any socket operation takes too long
 
-    #Check incoming message type. 
-    #  1. msg_type=socket_ops.CLOSE_CONNECTION_MSG -> ending operations
-    #  2. msg_type=socket_ops.INITIAL_PREDICTION_MSG -> will send images(bgr+pos) for get initial delta position prediction
-    #==== FUTURE IDEAS ====
-    #  3. msg_type=socket_ops.OBSTACLE -> will send image along with delta from intitial position 
-    #                                     and last target, and distance of object detected by LiDAR in front
-    msg_type = socket_ops.recieve_string(conn)
+    try:
+        #Accept connection
+        (conn, conn_addr) = server.accept()
+        print("Got connnection from", conn_addr)
 
-    print("[INCOMING MESSAGE TYPE]", msg_type)
+        #Check incoming message type. 
+        #  1. msg_type=socket_ops.CLOSE_CONNECTION_MSG -> ending operations
+        #  2. msg_type=socket_ops.INITIAL_PREDICTION_MSG -> will send images(bgr+pos) for get initial delta position prediction
+        #==== FUTURE IDEAS ====
+        #  3. msg_type=socket_ops.OBSTACLE -> will send image along with delta from intitial position 
+        #                                     and last target, and distance of object detected by LiDAR in front
+        msg_type = socket_ops.recieve_string(conn)
 
-    if msg_type == socket_ops.CLOSE_CONNECTION_MSG:
-        print("Closing connection...")
-        conn.close()
+        print("[INCOMING MESSAGE TYPE]", msg_type)
 
-    elif msg_type == socket_ops.INITIAL_PREDICTION_MSG:
-        bgr_image_arr = socket_ops.recieve_image(conn) #incoming image (3D)
-        depth_image_arr = socket_ops.recieve_image(conn)
+        if msg_type == socket_ops.CLOSE_CONNECTION_MSG:
+            print("Closing connection...")
+            conn.close()
 
+        elif msg_type == socket_ops.INITIAL_PREDICTION_MSG:
+            bgr_image_arr = socket_ops.recieve_image(conn) #incoming image (3D)
+            depth_image_arr = socket_ops.recieve_image(conn)
+
+            if not USE_DEPTH:
+                depth_image_arr = None
+
+            #Quick visualization of image
+            cv2.imshow("img-recieved", bgr_image_arr)
+            cv2.waitKey(0) #Close window to continue
+            cv2.destroyAllWindows()
+
+            #====== Stage 1: extraction ======
+
+            print(f"\n--- Stage 1: get_targets() [{'LLM' if target_finder.USE_LLM_FOR_CALL1 else 'deterministic, no LLM'}] ---")
+            call1_result = target_finder.get_targets(instruction, object_name = object_name)
+            print(json.dumps(call1_result, indent = 2))
+
+            #====== Stage 2: vision (REAL detector, both passes) ======
+
+            print("\n--- Stage 2: vision.run_vision() [REAL detector, x/y/z MOCKED] ---")
+            detections = vision.run_vision(bgr_image_arr, depth_image_arr, call1_result["targets"], device = "cpu")
+            print(f"{len(detections)} total detections (prompted + default_vocab)")
+
+            prompted = [d for d in detections if d["source"] == "prompted"]
+            print(f"  {len(prompted)} from the PROMPTED pass:")
+            for d in prompted:
+                print(f"    {d}")
+
+            if not prompted:
+                print("\n  No prompted detections found -- Call #2 will likely return "
+                    "'target_not_found'. This is a real result, not an error.")
+
+            #====== Stage 3: Call #2 ======
+
+            print(f"\n--- Stage 3: get_delta_auto() [{'LLM' if target_finder.USE_LLM_FOR_CALL2 else 'deterministic, no LLM'}] ---")
+            call2_result = target_finder.get_delta_auto(
+                instruction, call1_result, detections, STARTING_CAR_STATE, CAR_CAPABILITIES
+            )
+            print(json.dumps(call2_result, indent = 2))
+
+            #===== Stage 4: sending instructions =====
+            print("--- Stage 4: Sending instructions to car ---")
+
+            instructions_json = json.dumps(call2_result)
+            socket_ops.send_string(conn, instructions_json)
+
+        conn.close() #Close the socket connection
+
+        print("\n" + "=" * 70)
         if not USE_DEPTH:
-            depth_image_arr = None
+            print("Done. Reminder: x/y/z from vision.py are MOCKED (bbox-derived placeholders),")
+            print("not real depth camera data. Everything else in this run (extraction,")
+            print("detection, color-check, and Call #2) was real.")
+        else:
+            print("Done. Everything in this run was real, including extraction, detection, ")
+            print("color-check, and Call #2.")
+        print("=" * 70)
 
-        #Quick visualization of image
-        cv2.imshow("img-recieved", bgr_image_arr)
-        cv2.waitKey(0) #Close window to continue
-        cv2.destroyAllWindows()
+    except socket.timeout:
+        print("TimeoutError: Could not connect to other server in time")
 
-        #====== Stage 1: extraction ======
-
-        print(f"\n--- Stage 1: get_targets() [{'LLM' if target_finder.USE_LLM_FOR_CALL1 else 'deterministic, no LLM'}] ---")
-        call1_result = target_finder.get_targets(instruction, object_name = object_name)
-        print(json.dumps(call1_result, indent = 2))
-
-        #====== Stage 2: vision (REAL detector, both passes) ======
-
-        print("\n--- Stage 2: vision.run_vision() [REAL detector, x/y/z MOCKED] ---")
-        detections = vision.run_vision(bgr_image_arr, depth_image_arr, call1_result["targets"], device = "cpu")
-        print(f"{len(detections)} total detections (prompted + default_vocab)")
-
-        prompted = [d for d in detections if d["source"] == "prompted"]
-        print(f"  {len(prompted)} from the PROMPTED pass:")
-        for d in prompted:
-            print(f"    {d}")
-
-        if not prompted:
-            print("\n  No prompted detections found -- Call #2 will likely return "
-                "'target_not_found'. This is a real result, not an error.")
-
-        #====== Stage 3: Call #2 ======
-
-        print(f"\n--- Stage 3: get_delta_auto() [{'LLM' if target_finder.USE_LLM_FOR_CALL2 else 'deterministic, no LLM'}] ---")
-        call2_result = target_finder.get_delta_auto(
-            instruction, call1_result, detections, STARTING_CAR_STATE, CAR_CAPABILITIES
-        )
-        print(json.dumps(call2_result, indent = 2))
-
-        #===== Stage 4: sending instructions =====
-        print("--- Stage 4: Sending instructions to car ---")
-
-        instructions_json = json.dumps(call2_result)
-        socket_ops.send_string(conn, instructions_json)
-
-    print("\n" + "=" * 70)
-    if not USE_DEPTH:
-        print("Done. Reminder: x/y/z from vision.py are MOCKED (bbox-derived placeholders),")
-        print("not real depth camera data. Everything else in this run (extraction,")
-        print("detection, color-check, and Call #2) was real.")
-    else:
-        print("Done. Everything in this run was real, including extraction, detection, ")
-        print("color-check, and Call #2.")
-    print("=" * 70)
-
+    server.close() #Close the server
 
 if __name__ == "__main__":
     main()
