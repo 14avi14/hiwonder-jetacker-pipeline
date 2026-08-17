@@ -80,8 +80,8 @@ sim_topics = {
 real_topics = {
     "odom": "/odom_raw",
     "cmd_vel": "/controller/cmd_vel",
-    "depth_cam": "/camera/depth/image",
-    "rgb_cam": "/camera/rgb/image_raw",
+    "depth_cam": "/depth_cam/depth/image_raw",
+    "rgb_cam": "/depth_cam/rgb/image_raw",
 }
 
 class RemoteController(Node):
