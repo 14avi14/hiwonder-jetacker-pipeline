@@ -170,10 +170,10 @@ def get_mock_depth(bbox_xyxy, image_shape):
 #TODO (whoever owns the depth camera work): replace this dictionary with real values
 # from the car(should be found in /camera_info topic or similar).
 INTRINSIC_MATRIX_VALUES = {
-    "fx": 0.0,
-    "fy": 0.0,
-    "cx": 0.0,
-    "cy": 0.0
+    "fx": 545.1777954101562,
+    "fy": 545.1777954101562,
+    "cx": 325.6365051269531,
+    "cy": 237.0912322998047
 }
 
 def get_real_depth(bbox_xyxy, z):
@@ -183,8 +183,7 @@ def get_real_depth(bbox_xyxy, z):
 
     x = z * (cx - INTRINSIC_MATRIX_VALUES["cx"]) / INTRINSIC_MATRIX_VALUES["fx"]
     y = z * (cy - INTRINSIC_MATRIX_VALUES["cy"]) / INTRINSIC_MATRIX_VALUES["fy"]
-
-    return (x, y, z)
+    return (x/1000, y/1000, z/1000) #Convert mm to m
 
 #================================== MAIN ENTRY POINT ===================================
 
@@ -250,13 +249,15 @@ def run_vision(image_arr, depth_image_arr, targets, device = "cpu", image_path =
                 #TODO: Need to research, does the mask give the coordinates of the object in the image? If so, that may
                 #be more accurate than simply using the center of the bounding box(for depth).
                 x1, y1, x2, y2 = bbox
-                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-
-                #TODO: depth_z is in mm if dtype = uint16, meters if dtype = float32, need to check on real car, and verify 
-                depth_z = depth_image_arr[cy][cx] 
+                cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+                cx = min(max(0, cx), len(depth_image_arr[0])-1)
+                cy = min(max(0, cy), len(depth_image_arr)-1)
+                depth_z = depth_image_arr[cy, cx] 
                 x, y, z = get_real_depth(bbox, depth_z)
             else:
                 x, y, z = get_mock_depth(bbox, image.shape) #MOCK -- see docstring above
+
+            x, y, z = z, -x, y #Since x should be forward/depth, y should be left(pos)/right(neg), and z should be up down 
 
             detections.append({
                 "name": plain_name,
@@ -279,18 +280,22 @@ def run_vision(image_arr, depth_image_arr, targets, device = "cpu", image_path =
             # Will need to be updated, see above
             if use_depth_img:
                 x1, y1, x2, y2 = bbox
-                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-                depth_z = depth_image_arr[cx][cy]
+                cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+                cx = min(max(0, cx), len(depth_image_arr[0])-1)
+                cy = min(max(0, cy), len(depth_image_arr)-1)
+                depth_z = depth_image_arr[cy, cx]
                 x, y, z = get_real_depth(bbox, depth_z)
             else:
                 x, y, z = get_mock_depth(bbox, image.shape) #MOCK -- see docstring above
 
-            detections.append({
+            x, y, z = z, -x, y #see above
+            #Commented out for now due double detection difficulties
+            '''detections.append({
                 "name": name,
                 "attribute_match": None, #Nothing requested to verify in this pass
-                "x": x, "y": y, "z": z, #MOCK
+                "x": x, "y": y, "z": z,
                 "confidence": round(float(box.conf[0]), 3),
                 "source": "default_vocab"
-            })
+            })'''
 
     return detections
