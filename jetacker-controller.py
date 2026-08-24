@@ -76,7 +76,7 @@ sim_topics = {
     "rgb_cam": "/depth_cam/depth_cam",
 }
 
-# TODO: Verify topic names on real car using `ros2 topic list`
+
 real_topics = {
     "odom": "/odom_raw",
     "cmd_vel": "/controller/cmd_vel",
@@ -122,13 +122,14 @@ class RemoteController(Node):
         # Path planner controller
         self.controller = path_planner.MotionController(CAR_CAPABILITIES)
         self.get_instructions = True
+        self.car_state = STARTING_CAR_STATE
 
         self.get_logger().info("Starting controls")
 
     def update_target(self, depth, rgb):
         if self.get_instructions:
             cv_bgr_image = self.bridge.imgmsg_to_cv2(rgb)[..., ::-1] #Reverse index changes RGB to BGR
-            cv_depth_image = self.bridge.imgmsg_to_cv2(depth)
+            cv_depth_image = self.bridge.imgmsg_to_cv2(depth, desired_encoding="passthrough")
 
             socket_ops.send_string(self.connection, socket_ops.INITIAL_PREDICTION_MSG) # Notify server that need initial prediction
             socket_ops.send_image(self.connection, cv_bgr_image) # Send the color(in BGR format) image
@@ -136,7 +137,7 @@ class RemoteController(Node):
             self.get_logger().info("[MSG SENT] Messages sent to car")
 
             result = json.loads(socket_ops.recieve_string(self.connection))
-            got_target = self.controller.set_target(result, STARTING_CAR_STATE)
+            got_target = self.controller.set_target(result, self.car_state)
 
             if not got_target:
                 print(f"No target set (Call #2 status was '{result.get('status')}', not 'moving'). "
@@ -150,15 +151,15 @@ class RemoteController(Node):
         linear_vel = odom.twist.twist.linear.x
         angular_vel = odom.twist.twist.angular.z
 
-        car_state = {
+        self.car_state = {
             "velocity": linear_vel,
-            "heading_deg": angle,
+            "heading_deg": math.degrees(angle),
             "position_xy": [position.x, position.y]
         }
 
-        linear_x, angular_z, status = self.controller.compute_control(car_state)
+        linear_x, angular_z, status = self.controller.compute_control(self.car_state)
 
-        self.get_logger().info(f"STATUS: {status}\nLinear: {linear_x} | Angular: {angular_z}")
+        self.get_logger().info(f"STATUS: {status}\nCar State: {self.car_state}\nTarget: {self.controller.target_world_xy}")
 
         if status == "arrived":
             self.get_logger().info("============ FINISHED ============")
