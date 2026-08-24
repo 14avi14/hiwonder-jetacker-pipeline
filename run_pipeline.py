@@ -96,7 +96,7 @@ CAR_CAPABILITIES = {
     "height_m": 0.15  #GUESS, not measured
 }
 
-USE_DEPTH = False #Need intrinsic matrix -- see vision.py
+USE_DEPTH = True #Need intrinsic matrix -- see vision.py
 
 
 #=================================== MAIN ROUTINE ======================================
@@ -161,7 +161,7 @@ def main():
 
             #====== Stage 2: vision (REAL detector, both passes) ======
 
-            print("\n--- Stage 2: vision.run_vision() [REAL detector, x/y/z MOCKED] ---")
+            print("\n--- Stage 2: vision.run_vision() [REAL detector, REAL x/y/z] ---")
             detections = vision.run_vision(bgr_image_arr, depth_image_arr, call1_result["targets"], device = "cpu")
             print(f"{len(detections)} total detections (prompted + default_vocab)")
 
