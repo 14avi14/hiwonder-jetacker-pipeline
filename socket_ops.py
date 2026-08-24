@@ -30,11 +30,11 @@ def send_string(conn, msg):
     message = msg.encode(FORMAT)
     send_bytes(conn, message)
 
-def send_image(conn, image, format_ext=".jpg"):
+def send_image(conn, image, format_ext=".png"):
     success, img_encoded = cv2.imencode(format_ext, image)
 
     if success:
-        byte_data = img_encoded.tobytes() #np.uint8 -> bytes
+        byte_data = img_encoded.tobytes()
         send_bytes(conn, byte_data)
     else:
         print("Image could not be encoded")
@@ -69,5 +69,5 @@ def recieve_string(conn):
 def recieve_image(conn):
     img_bytes = recieve_bytes(conn)
     bytes_arr = np.frombuffer(img_bytes, dtype=np.uint8)
-    img = cv2.imdecode(bytes_arr, cv2.IMREAD_ANYCOLOR)
+    img = cv2.imdecode(bytes_arr, cv2.IMREAD_UNCHANGED)
     return img
