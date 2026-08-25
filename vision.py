@@ -47,7 +47,7 @@ import numpy as np #This handles pixel arrays for the color-check
 
 #Change this one line to switch detectors. "yoloworld" doesn't need YOLOE's extra CLIP
 #package install, and had a slightly higher hit rate in earlier testing.
-DETECTOR = "yoloworld"
+DETECTOR = "yoloe"
 
 if DETECTOR == "yoloe":
     from ultralytics import YOLOE as _Model
@@ -228,7 +228,7 @@ def run_vision(image_arr, depth_image_arr, targets, device = "cpu", image_path =
     else:
         model_p.set_classes(prompt_names)
 
-    results_p = model_p.predict(image, device = device, verbose = False)[0]
+    results_p = model_p.predict(image, device = device, conf=0.1, verbose = False)[0]
     has_masks = results_p.masks is not None
 
     if results_p.boxes is not None:
@@ -245,11 +245,24 @@ def run_vision(image_arr, depth_image_arr, targets, device = "cpu", image_path =
 
             attr_match = _color_check(image, bbox, requested_attr, mask = mask) #Independent verification
 
+
             if use_depth_img:
                 #TODO: Need to research, does the mask give the coordinates of the object in the image? If so, that may
                 #be more accurate than simply using the center of the bounding box(for depth).
                 x1, y1, x2, y2 = bbox
-                cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+
+
+
+                if mask is not None:
+                    valid_coords = mask * depth_image_arr
+                    rows, cols = np.nonzero(valid_coords)
+                    cx, cy = cols[-1], rows[-1] #Closest to ground
+                else:
+                    rows, cols = np.nonzero(depth_image_arr)
+                    coords = np.vstack((rows, cols))
+                    valid_coords = coords[:, (rows > y1 & rows < y2) & (cols > x1 & cols < x2)]
+                    cy, cx = valid_coords[:, -1]
+
                 cx = min(max(0, cx), len(depth_image_arr[0])-1)
                 cy = min(max(0, cy), len(depth_image_arr)-1)
                 depth_z = depth_image_arr[cy, cx] 
