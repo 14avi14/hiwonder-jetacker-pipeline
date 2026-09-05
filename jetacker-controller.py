@@ -162,8 +162,10 @@ class RemoteController(Node):
         self.get_logger().info(f"STATUS: {status}\nCar State: {self.car_state}\nTarget: {self.controller.target_world_xy}")
 
         if status == "arrived":
+            self.get_instructions = True
             self.get_logger().info("============ FINISHED ============")
         elif status == "no_target":
+            self.get_instructions = True
             pass
 
         msg = Twist()
