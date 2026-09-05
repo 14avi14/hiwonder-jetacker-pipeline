@@ -3,7 +3,7 @@ JetAcker VLA Pipeline - vision.py
 
 Author: Arush Kotta
 Starting Date: July 26, 2026
-Date of Most Recent Update: August 2, 2026
+Date of Most Recent Update: September 5, 2026
 
 Description: This module runs the actual object detector on a real image, in BOTH
              prompted mode (using Call #1's target names) and default-vocab / "unprompted"
@@ -17,11 +17,7 @@ Description: This module runs the actual object detector on a real image, in BOT
                    object's segmentation mask, classified pixel-by-pixel (majority vote,
                    NOT a naive hue average -- averaging breaks on red specifically, since
                    red straddles OpenCV's 0/179 hue wraparound point).
-
-             *** MOCKED in this file -- pending the depth camera module ***
-                 - 3D position (x, y, z). get_mock_depth() returns placeholder numbers
-                   derived only from bbox size/position in the 2D image -- NOT real
-                   depth-camera data.
+                 - Depth information -- uses camera's intrinsic matrix and depth camera data
 
                 NEW IN V0.2:
                 - Switched color-check from bbox-rectangle sampling to segmentation-mask
@@ -250,8 +246,6 @@ def run_vision(image_arr, depth_image_arr, targets, device = "cpu", image_path =
                 #TODO: Need to research, does the mask give the coordinates of the object in the image? If so, that may
                 #be more accurate than simply using the center of the bounding box(for depth).
                 x1, y1, x2, y2 = bbox
-
-
 
                 if mask is not None:
                     valid_coords = mask * depth_image_arr
