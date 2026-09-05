@@ -1,6 +1,6 @@
-# HiWonder JetAcker VLA Pipeline
+# HiWonder JetAcker LLM Navigation  Pipeline
 
-A modular vision-language-action pipeline for a HiWonder JetAcker (Ackermann-steering
+A modular large language model based navigation pipeline for a HiWonder JetAcker (Ackermann-steering
 car, Jetson Orin Nano). Starting milestone: "drive to the [color] cube/ball."
 
 ## File structure
@@ -40,10 +40,10 @@ backend (unsupported float64 op) -- `vision.py` / the run scripts default to CPU
 
 `target_finder.py` has a `USE_LLM_FOR_CALL2` flag (currently `True` by default) that
 decides whether Call #2 goes through a real LLM or a deterministic fallback. The real
-path (`call_llm()`) is currently wired to the Anthropic API, but the provider choice
-isn't finalized yet -- `anthropic` is deliberately left out of `requirements.txt` for
+path (`call_llm()`) is currently wired to the Cerebras API, but the provider choice
+isn't finalized yet -- `cerebras_cloud_sdk` is deliberately left out of `requirements.txt` for
 that reason. If you want to actually exercise the LLM path right now, install it
-yourself (`pip install anthropic`) and set `ANTHROPIC_API_KEY`; otherwise, set
+yourself (`pip install cerebras_cloud_sdk`) and set `CEREBRAS_API_KEY`; otherwise, set
 `USE_LLM_FOR_CALL2 = False` to use the deterministic fallback instead, which needs no
 extra install or API key.
 
@@ -72,7 +72,6 @@ python3 run_pipeline_manual.py
   passes), color verification (real per-pixel sampling on the detection's
   segmentation mask), Call #2 (LLM or deterministic, toggleable), the motion
   controller's math (uses the real JetAcker's wheelbase/steering numbers from
-  HiWonder's official docs).
-- **Mocked, clearly labeled in code:** 3D depth (`vision.py`'s `get_mock_depth()` --
-  placeholder pending the depth camera module), and car movement in `run_pipeline.py`
-  (kinematic simulation, not real odometry -- no physical car connected yet).
+  HiWonder's official docs), 3D depth (`vision.py`'s `get_real_depth()` --
+  uses intrinsic camera matrix with depth camera data).
+- **Mocked, clearly labeled in code:** N/A
